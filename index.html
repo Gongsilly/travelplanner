@@ -1,0 +1,1115 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>✈️ Travel Planner</title>
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { margin: 0; font-family: 'Segoe UI', sans-serif; background: #0f0f1a; color: #e2e8f0; }
+  #root { min-height: 100vh; }
+  .leaflet-container { background: #1e1e2e !important; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: #1e1e2e; }
+  ::-webkit-scrollbar-thumb { background: #4a4a6a; border-radius: 3px; }
+  .glass { background: rgba(255,255,255,0.05); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }
+  .day-badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
+  .tab-btn { transition: all 0.2s; }
+  .tab-btn.active { background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; }
+  .tab-btn:not(.active):hover { background: rgba(99,102,241,0.15); }
+  input, select, textarea { background: rgba(255,255,255,0.07) !important; color: #e2e8f0 !important; border: 1px solid rgba(255,255,255,0.15) !important; }
+  input::placeholder, textarea::placeholder { color: #6b7280 !important; }
+  input:focus, select, textarea:focus { outline: none !important; border-color: #6366f1 !important; box-shadow: 0 0 0 2px rgba(99,102,241,0.25) !important; }
+  select option { background: #1e1e2e; }
+  .map-container { width: 100%; height: 100%; }
+  .place-row:hover { background: rgba(99,102,241,0.08); }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  .fade-in { animation: fadeIn 0.3s ease; }
+  .wizard-step { transition: all 0.3s; }
+  .checked-item { text-decoration: line-through; opacity: 0.5; }
+  .gradient-text { background: linear-gradient(135deg, #6366f1, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+/* ─────────────────────────── CONSTANTS ─────────────────────────── */
+const APP_KEY = 'tp-trip';
+const CL_KEY  = 'tp-checklist';
+const PEOPLE_KEY = 'tp-people';
+const APP_VER = '1.0';
+
+const CAT_LIST = ['숙소','교통','식사','관광','쇼핑','액티비티','기타'];
+const CAT_COLORS = {
+  '숙소':'#f59e0b','교통':'#3b82f6','식사':'#10b981','관광':'#8b5cf6',
+  '쇼핑':'#ec4899','액티비티':'#f97316','기타':'#6b7280'
+};
+const DAY_COLORS = ['#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#84cc16'];
+
+const GRAD_POOL = [
+  { grad:'from-violet-500 to-purple-600', active:'bg-violet-500 border-violet-500', hover:'group-hover:border-violet-400', hex:'#8B5CF6' },
+  { grad:'from-pink-500 to-rose-500',     active:'bg-pink-500 border-pink-500',     hover:'group-hover:border-pink-400',   hex:'#EC4899' },
+  { grad:'from-blue-500 to-indigo-500',   active:'bg-blue-500 border-blue-500',     hover:'group-hover:border-blue-400',   hex:'#3B82F6' },
+  { grad:'from-amber-500 to-orange-500',  active:'bg-amber-500 border-amber-500',   hover:'group-hover:border-amber-400',  hex:'#F59E0B' },
+  { grad:'from-emerald-500 to-teal-500',  active:'bg-emerald-500 border-emerald-500', hover:'group-hover:border-emerald-400', hex:'#10B981' },
+  { grad:'from-rose-500 to-red-500',      active:'bg-rose-500 border-rose-500',     hover:'group-hover:border-rose-400',   hex:'#F43F5E' },
+];
+const EMOJI_POOL = ['🧡','💚','💙','💛','🩷','💜','🤍','🩵'];
+
+const PEOPLE_DEFAULT = [
+  { id:'p1', key:'나', emoji:'🧡', ...GRAD_POOL[0] },
+  { id:'p2', key:'동행', emoji:'💚', ...GRAD_POOL[1] },
+];
+
+const CL_DEFAULT = [
+  { id:'cl1', cat:'👔 의류', items:['상의 3벌','하의 3벌','속옷 4세트','잠옷','얇은 겉옷'] },
+  { id:'cl2', cat:'🧴 세면용품', items:['칫솔/치약','샴푸/린스','스킨케어','면도기'] },
+  { id:'cl3', cat:'💊 의약품', items:['상비약','소화제','밴드','멀미약'] },
+  { id:'cl4', cat:'📱 전자기기', items:['스마트폰 충전기','보조배터리','이어폰','어댑터'] },
+  { id:'cl5', cat:'📄 서류', items:['여권','항공권 인쇄본','숙소 예약확인서','여행자보험'] },
+  { id:'cl6', cat:'💰 금전', items:['현지 화폐','신용카드','비상금'] },
+];
+
+function autoEmoji(name) {
+  const n = name.toLowerCase();
+  const rules = [
+    [['의류','옷','셔츠','티','바지','치마','속옷','잠옷','겉옷'], '👔'],
+    [['세면','샴푸','치약','칫솔','린스','스킨','로션','화장'], '🧴'],
+    [['약','의약','진통','소화','밴드','멀미'], '💊'],
+    [['전자','충전','배터리','이어폰','케이블','어댑터','폰','노트북'], '📱'],
+    [['서류','여권','항공','비자','보험','예약'], '📄'],
+    [['돈','금전','화폐','카드','현금'], '💰'],
+    [['신발','슬리퍼','운동화'], '👟'],
+    [['가방','캐리어','배낭'], '🎒'],
+    [['음식','간식','식품'], '🍱'],
+    [['카메라','사진'], '📷'],
+    [['선글라스','모자','악세서리'], '🕶️'],
+    [['세탁','청소','위생'], '🧼'],
+  ];
+  for (const [kws, em] of rules) if (kws.some(k => n.includes(k))) return em;
+  return '📦';
+}
+
+function genId() { return Math.random().toString(36).slice(2, 9); }
+
+function dateRange(start, end) {
+  const days = [];
+  let cur = new Date(start);
+  const last = new Date(end);
+  while (cur <= last) {
+    days.push(cur.toISOString().split('T')[0]);
+    cur = new Date(cur.getTime() + 86400000);
+  }
+  return days;
+}
+
+function formatDate(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' });
+}
+
+function dayLabel(i) {
+  return `Day ${i + 1}`;
+}
+
+/* ─────────────────────────── NOMINATIM ─────────────────────────── */
+async function nominatimSearch(q) {
+  if (!q.trim()) return [];
+  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=5&accept-language=ko`;
+  try {
+    const r = await fetch(url, { headers: { 'Accept-Language': 'ko' } });
+    return await r.json();
+  } catch { return []; }
+}
+
+/* ─────────────────────────── MAP PICKER MODAL ─────────────────────────── */
+function MapPickerModal({ onConfirm, onClose, initialPos, initialName }) {
+  const mapRef = useRef(null);
+  const mapInst = useRef(null);
+  const markerRef = useRef(null);
+  const [pos, setPos] = useState(initialPos || null);
+  const [searchQ, setSearchQ] = useState(initialName || '');
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+
+  useEffect(() => {
+    setTimeout(() => {
+      if (!mapRef.current || mapInst.current) return;
+      const center = initialPos || [35.6762, 139.6503];
+      const map = L.map(mapRef.current, { zoomControl: true }).setView(center, initialPos ? 15 : 5);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap', maxZoom: 19
+      }).addTo(map);
+      mapInst.current = map;
+
+      if (initialPos) {
+        markerRef.current = L.marker(initialPos, { draggable: true }).addTo(map);
+        markerRef.current.on('dragend', e => setPos([e.target.getLatLng().lat, e.target.getLatLng().lng]));
+      }
+
+      map.on('click', e => {
+        const latlng = [e.latlng.lat, e.latlng.lng];
+        setPos(latlng);
+        if (markerRef.current) { markerRef.current.setLatLng(latlng); }
+        else { markerRef.current = L.marker(latlng, { draggable: true }).addTo(map); markerRef.current.on('dragend', ev => setPos([ev.target.getLatLng().lat, ev.target.getLatLng().lng])); }
+      });
+    }, 100);
+    return () => { if (mapInst.current) { mapInst.current.remove(); mapInst.current = null; } };
+  }, []);
+
+  async function doSearch() {
+    if (!searchQ.trim()) return;
+    setSearching(true);
+    const res = await nominatimSearch(searchQ);
+    setResults(res);
+    setSearching(false);
+  }
+
+  function pickResult(r) {
+    const latlng = [parseFloat(r.lat), parseFloat(r.lon)];
+    setPos(latlng);
+    setResults([]);
+    if (mapInst.current) {
+      mapInst.current.setView(latlng, 16);
+      if (markerRef.current) { markerRef.current.setLatLng(latlng); }
+      else { markerRef.current = L.marker(latlng, { draggable: true }).addTo(mapInst.current); markerRef.current.on('dragend', e => setPos([e.target.getLatLng().lat, e.target.getLatLng().lng])); }
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+      <div className="glass rounded-2xl w-full max-w-2xl flex flex-col" style={{ height:'90vh', maxHeight:640 }}>
+        <div className="flex items-center justify-between p-4 border-b border-white/10">
+          <h3 className="font-bold text-lg gradient-text">📍 위치 선택</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">×</button>
+        </div>
+        <div className="p-3 border-b border-white/10 space-y-2">
+          <div className="flex gap-2">
+            <input className="flex-1 rounded-lg px-3 py-2 text-sm" placeholder="장소명 검색..." value={searchQ}
+              onChange={e => setSearchQ(e.target.value)} onKeyDown={e => e.key === 'Enter' && doSearch()} />
+            <button onClick={doSearch} disabled={searching}
+              className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm font-semibold disabled:opacity-50">
+              {searching ? '...' : '검색'}
+            </button>
+          </div>
+          {results.length > 0 && (
+            <div className="bg-black/40 rounded-lg border border-white/10 max-h-32 overflow-y-auto">
+              {results.map((r, i) => (
+                <button key={i} onClick={() => pickResult(r)}
+                  className="w-full text-left px-3 py-2 text-xs hover:bg-white/10 border-b border-white/5 last:border-0">
+                  {r.display_name}
+                </button>
+              ))}
+            </div>
+          )}
+          <p className="text-xs text-gray-400">지도를 클릭하거나 마커를 드래그해 위치를 정확히 조정하세요</p>
+        </div>
+        <div className="flex-1 relative">
+          <div ref={mapRef} className="map-container" style={{ borderRadius: '0 0 0 0' }} />
+        </div>
+        <div className="p-3 flex items-center justify-between border-t border-white/10">
+          <span className="text-xs text-gray-400">
+            {pos ? `${pos[0].toFixed(5)}, ${pos[1].toFixed(5)}` : '위치를 선택하세요'}
+          </span>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-sm">취소</button>
+            <button onClick={() => pos && onConfirm(pos)} disabled={!pos}
+              className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm font-semibold disabled:opacity-50">
+              선택 완료
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────── PLACE MODAL ─────────────────────────── */
+function PlaceModal({ place, dayIndex, onSave, onDelete, onClose, tripDays }) {
+  const [form, setForm] = useState(place || { time:'09:00', name:'', detail:'', cat:'관광', pos: null });
+  const [showMap, setShowMap] = useState(false);
+  const isEdit = !!place?.id;
+
+  function set(k, v) { setForm(f => ({ ...f, [k]: v })); }
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 p-4" onClick={e => e.target === e.currentTarget && onClose()}>
+        <div className="glass rounded-2xl w-full max-w-md fade-in">
+          <div className="flex items-center justify-between p-4 border-b border-white/10">
+            <h3 className="font-bold text-lg gradient-text">{isEdit ? '✏️ 장소 편집' : '➕ 장소 추가'}</h3>
+            <button onClick={onClose} className="text-gray-400 hover:text-white text-xl">×</button>
+          </div>
+          <div className="p-4 space-y-3">
+            <div className="flex gap-2">
+              <div className="w-28">
+                <label className="text-xs text-gray-400 mb-1 block">시간</label>
+                <input type="time" className="w-full rounded-lg px-3 py-2 text-sm" value={form.time} onChange={e => set('time', e.target.value)} />
+              </div>
+              <div className="flex-1">
+                <label className="text-xs text-gray-400 mb-1 block">카테고리</label>
+                <select className="w-full rounded-lg px-3 py-2 text-sm" value={form.cat} onChange={e => set('cat', e.target.value)}>
+                  {CAT_LIST.map(c => <option key={c}>{c}</option>)}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">장소명 *</label>
+              <input className="w-full rounded-lg px-3 py-2 text-sm" placeholder="장소 이름을 입력하세요" value={form.name} onChange={e => set('name', e.target.value)} />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">메모</label>
+              <textarea className="w-full rounded-lg px-3 py-2 text-sm resize-none" rows={2} placeholder="메모를 입력하세요" value={form.detail} onChange={e => set('detail', e.target.value)} />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">지도 위치</label>
+              <button onClick={() => setShowMap(true)}
+                className="w-full rounded-lg px-3 py-2 text-sm border border-white/15 hover:border-indigo-400 flex items-center gap-2 transition-colors">
+                <span>📍</span>
+                <span className="flex-1 text-left text-gray-300">
+                  {form.pos ? `${form.pos[0].toFixed(4)}, ${form.pos[1].toFixed(4)}` : '위치를 선택하세요 (선택 사항)'}
+                </span>
+                {form.pos && <span className="text-green-400 text-xs">✓ 설정됨</span>}
+              </button>
+            </div>
+            {isEdit && tripDays && (
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">일정 이동</label>
+                <select className="w-full rounded-lg px-3 py-2 text-sm" value={dayIndex} onChange={e => set('_moveTo', parseInt(e.target.value))}>
+                  {tripDays.map((d, i) => <option key={i} value={i}>{dayLabel(i)} · {formatDate(d)}</option>)}
+                </select>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center justify-between p-4 border-t border-white/10">
+            <div>
+              {isEdit && <button onClick={() => onDelete(place.id)} className="px-4 py-2 rounded-lg bg-red-500/20 hover:bg-red-500/40 text-red-400 text-sm">🗑️ 삭제</button>}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={onClose} className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-sm">취소</button>
+              <button onClick={() => form.name.trim() && onSave(form, dayIndex)}
+                disabled={!form.name.trim()}
+                className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm font-semibold disabled:opacity-50">저장</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      {showMap && (
+        <MapPickerModal initialPos={form.pos} initialName={form.name}
+          onConfirm={p => { set('pos', p); setShowMap(false); }}
+          onClose={() => setShowMap(false)} />
+      )}
+    </>
+  );
+}
+
+/* ─────────────────────────── TRAVEL MAP ─────────────────────────── */
+function TravelMap({ show, tripData, visibleDays }) {
+  const mapRef = useRef(null);
+  const mapInst = useRef(null);
+  const layersRef = useRef([]);
+  const tripDataRef = useRef(tripData);
+  const visibleDaysRef = useRef(visibleDays);
+  const pendingUpdate = useRef(false);
+  const initialized = useRef(false);
+
+  useEffect(() => { tripDataRef.current = tripData; }, [tripData]);
+  useEffect(() => { visibleDaysRef.current = visibleDays; }, [visibleDays]);
+
+  const applyLayers = useCallback((map) => {
+    layersRef.current.forEach(l => map.removeLayer(l));
+    layersRef.current = [];
+    const td = tripDataRef.current;
+    const vd = visibleDaysRef.current;
+    if (!td?.days) return;
+
+    let allPoints = [];
+    td.days.forEach((day, di) => {
+      if (!vd[di]) return;
+      const pts = day.places.filter(p => p.pos);
+      if (pts.length === 0) return;
+      const col = DAY_COLORS[di % DAY_COLORS.length];
+
+      if (pts.length > 1) {
+        const line = L.polyline(pts.map(p => p.pos), { color: col, weight: 3, opacity: 0.7, dashArray: '6 4' });
+        line.addTo(map); layersRef.current.push(line);
+      }
+
+      pts.forEach((p, pi) => {
+        const icon = L.divIcon({
+          className: '',
+          html: `<div style="background:${col};color:white;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.4)">${pi + 1}</div>`,
+          iconSize: [28, 28], iconAnchor: [14, 14]
+        });
+        const marker = L.marker(p.pos, { icon });
+        marker.bindPopup(`<b>${p.name}</b><br><span style="color:#aaa;font-size:12px">${dayLabel(di)} · ${p.time}</span>`);
+        marker.addTo(map); layersRef.current.push(marker);
+        allPoints.push(p.pos);
+      });
+    });
+
+    if (allPoints.length > 0) {
+      try { map.fitBounds(allPoints, { padding: [30, 30] }); } catch {}
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!show) return;
+    if (!initialized.current) {
+      setTimeout(() => {
+        if (!mapRef.current) return;
+        const td = tripDataRef.current;
+        const center = td?.hotel?.pos || [20, 0];
+        const zoom = td?.hotel?.pos ? 12 : 2;
+        const map = L.map(mapRef.current).setView(center, zoom);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© OpenStreetMap', maxZoom: 19
+        }).addTo(map);
+        mapInst.current = map;
+        initialized.current = true;
+        applyLayers(map);
+        setTimeout(() => map.invalidateSize(), 50);
+        setTimeout(() => map.invalidateSize(), 300);
+      }, 80);
+      return;
+    }
+    if (mapInst.current) {
+      applyLayers(mapInst.current);
+      setTimeout(() => mapInst.current?.invalidateSize(), 50);
+      setTimeout(() => mapInst.current?.invalidateSize(), 300);
+      pendingUpdate.current = false;
+    }
+  }, [show, tripData, visibleDays]);
+
+  useEffect(() => {
+    if (!show && mapInst.current) {
+      pendingUpdate.current = true;
+    }
+  }, [tripData, visibleDays]);
+
+  useEffect(() => {
+    if (show && pendingUpdate.current && mapInst.current) {
+      applyLayers(mapInst.current);
+      setTimeout(() => mapInst.current?.invalidateSize(), 50);
+      setTimeout(() => mapInst.current?.invalidateSize(), 300);
+      pendingUpdate.current = false;
+    }
+  }, [show]);
+
+  return (
+    <div ref={mapRef} className="map-container" style={{ display: show ? 'block' : 'none' }} />
+  );
+}
+
+/* ─────────────────────────── HOME VIEW ─────────────────────────── */
+function HomeView({ tripData, show }) {
+  const [visibleDays, setVisibleDays] = useState(() => (tripData?.days || []).map(() => true));
+
+  useEffect(() => {
+    if (tripData?.days) setVisibleDays(tripData.days.map(() => true));
+  }, [tripData?.days?.length]);
+
+  const allOn = visibleDays.every(Boolean);
+  const toggle = (i) => setVisibleDays(v => v.map((x, j) => j === i ? !x : x));
+  const toggleAll = () => setVisibleDays(v => v.map(() => !allOn));
+
+  if (!tripData) return null;
+
+  return (
+    <div style={{ display: show ? 'flex' : 'none' }} className="flex-col h-full">
+      {/* Day filter */}
+      <div className="flex flex-wrap gap-2 p-3 border-b border-white/10">
+        <button onClick={toggleAll}
+          className={`px-3 py-1 rounded-full text-xs font-semibold border transition-all ${allOn ? 'bg-white/15 border-white/30 text-white' : 'border-white/15 text-gray-400'}`}>
+          {allOn ? '전체 해제' : '전체 선택'}
+        </button>
+        {(tripData.days || []).map((d, i) => (
+          <button key={i} onClick={() => toggle(i)}
+            style={{ borderColor: visibleDays[i] ? DAY_COLORS[i % DAY_COLORS.length] : 'rgba(255,255,255,0.1)',
+                     backgroundColor: visibleDays[i] ? DAY_COLORS[i % DAY_COLORS.length] + '33' : 'transparent',
+                     color: visibleDays[i] ? DAY_COLORS[i % DAY_COLORS.length] : '#6b7280' }}
+            className="px-3 py-1 rounded-full text-xs font-semibold border transition-all">
+            {dayLabel(i)}
+          </button>
+        ))}
+      </div>
+      {/* Trip info */}
+      <div className="p-3 border-b border-white/10">
+        <h2 className="text-lg font-bold gradient-text">{tripData.name}</h2>
+        <p className="text-xs text-gray-400">{tripData.destination} · {tripData.startDate} ~ {tripData.endDate}</p>
+      </div>
+      {/* Map */}
+      <div className="flex-1 relative" style={{ minHeight: 300 }}>
+        <TravelMap show={show} tripData={tripData} visibleDays={visibleDays} />
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────── DAY VIEW ─────────────────────────── */
+function DayView({ tripData, show }) {
+  const [selDay, setSelDay] = useState(0);
+  if (!tripData?.days) return null;
+  const days = tripData.days;
+  const day = days[selDay];
+
+  return (
+    <div style={{ display: show ? 'block' : 'none' }} className="h-full overflow-y-auto">
+      {/* day tabs */}
+      <div className="flex gap-1 p-3 overflow-x-auto border-b border-white/10 sticky top-0 bg-[#0f0f1a]/95 z-10">
+        {days.map((d, i) => (
+          <button key={i} onClick={() => setSelDay(i)}
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap border transition-all ${selDay === i ? 'text-white border-transparent' : 'border-white/15 text-gray-400 hover:text-white'}`}
+            style={selDay === i ? { background: DAY_COLORS[i % DAY_COLORS.length], borderColor: 'transparent' } : {}}>
+            {dayLabel(i)}
+          </button>
+        ))}
+      </div>
+
+      {day && (
+        <div className="p-4">
+          <h3 className="text-sm font-bold text-gray-300 mb-3">{dayLabel(selDay)} · {formatDate(tripData.startDate ? new Date(new Date(tripData.startDate + 'T00:00:00').getTime() + selDay * 86400000).toISOString().split('T')[0] : '')}</h3>
+          <div className="space-y-2">
+            {day.places.length === 0 && <p className="text-gray-500 text-sm py-8 text-center">일정이 없습니다</p>}
+            {[...day.places].sort((a, b) => a.time.localeCompare(b.time)).map((p, pi) => (
+              <div key={p.id} className="place-row flex gap-3 p-3 rounded-xl border border-white/8 transition-colors">
+                <div className="text-center pt-0.5">
+                  <div className="text-xs font-mono text-gray-400 w-12">{p.time}</div>
+                  <div className="w-2 h-2 rounded-full mx-auto mt-1.5"
+                    style={{ background: CAT_COLORS[p.cat] || '#6b7280' }} />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-semibold text-sm">{p.name}</span>
+                    <span className="day-badge text-white text-xs" style={{ background: CAT_COLORS[p.cat] || '#6b7280' }}>{p.cat}</span>
+                    {p.pos && <span className="text-xs text-green-400">📍</span>}
+                  </div>
+                  {p.detail && <p className="text-xs text-gray-400 mt-0.5">{p.detail}</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────── EDIT VIEW ─────────────────────────── */
+function EditView({ tripData, onSavePlace, onDeletePlace, onAddPlace, show }) {
+  const [selDay, setSelDay] = useState(0);
+  const [modal, setModal] = useState(null);
+  if (!tripData?.days) return null;
+  const days = tripData.days;
+
+  function openAdd() { setModal({ mode: 'add' }); }
+  function openEdit(p) { setModal({ mode: 'edit', place: p }); }
+
+  function handleSave(form, di) {
+    const moveTo = form._moveTo !== undefined ? form._moveTo : di;
+    const f = { ...form }; delete f._moveTo;
+    if (modal.mode === 'edit') onSavePlace(modal.place.id, di, f, moveTo);
+    else onAddPlace(di, f);
+    setModal(null);
+  }
+
+  function handleDelete(id) {
+    onDeletePlace(id, selDay);
+    setModal(null);
+  }
+
+  return (
+    <div style={{ display: show ? 'block' : 'none' }} className="h-full overflow-y-auto">
+      <div className="flex gap-1 p-3 overflow-x-auto border-b border-white/10 sticky top-0 bg-[#0f0f1a]/95 z-10">
+        {days.map((d, i) => (
+          <button key={i} onClick={() => setSelDay(i)}
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap border transition-all ${selDay === i ? 'text-white border-transparent' : 'border-white/15 text-gray-400 hover:text-white'}`}
+            style={selDay === i ? { background: DAY_COLORS[i % DAY_COLORS.length] } : {}}>
+            {dayLabel(i)}
+          </button>
+        ))}
+      </div>
+      <div className="p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-bold text-gray-300">{dayLabel(selDay)} 일정</h3>
+          <button onClick={openAdd}
+            className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold">+ 장소 추가</button>
+        </div>
+        <div className="space-y-2">
+          {days[selDay]?.places.length === 0 && <p className="text-gray-500 text-sm py-8 text-center">장소를 추가해보세요</p>}
+          {[...(days[selDay]?.places || [])].sort((a, b) => a.time.localeCompare(b.time)).map(p => (
+            <div key={p.id} className="place-row flex gap-3 p-3 rounded-xl border border-white/8 cursor-pointer" onClick={() => openEdit(p)}>
+              <div className="text-center pt-0.5">
+                <div className="text-xs font-mono text-gray-400 w-12">{p.time}</div>
+                <div className="w-2 h-2 rounded-full mx-auto mt-1.5" style={{ background: CAT_COLORS[p.cat] || '#6b7280' }} />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-semibold text-sm">{p.name}</span>
+                  <span className="day-badge text-white text-xs" style={{ background: CAT_COLORS[p.cat] || '#6b7280' }}>{p.cat}</span>
+                  {p.pos && <span className="text-xs text-green-400">📍</span>}
+                </div>
+                {p.detail && <p className="text-xs text-gray-400 mt-0.5">{p.detail}</p>}
+              </div>
+              <span className="text-gray-500 text-lg self-center">›</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      {modal && (
+        <PlaceModal place={modal.mode === 'edit' ? modal.place : null}
+          dayIndex={selDay} tripDays={tripData.days.map((_, i) => new Date(new Date(tripData.startDate + 'T00:00:00').getTime() + i * 86400000).toISOString().split('T')[0])}
+          onSave={handleSave} onDelete={handleDelete} onClose={() => setModal(null)} />
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────── TRIP SETTINGS MODAL ─────────────────────────── */
+function TripSettingsModal({ tripData, onSave, onClose }) {
+  const [form, setForm] = useState({
+    name: tripData.name, destination: tripData.destination,
+    startDate: tripData.startDate, endDate: tripData.endDate,
+    hotelName: tripData.hotel?.name || '', hotelPos: tripData.hotel?.pos || null
+  });
+  const [showMap, setShowMap] = useState(false);
+
+  function set(k, v) { setForm(f => ({ ...f, [k]: v })); }
+  function save() {
+    if (!form.name || !form.destination || !form.startDate || !form.endDate) return;
+    if (new Date(form.endDate) < new Date(form.startDate)) return;
+    onSave(form);
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 p-4">
+        <div className="glass rounded-2xl w-full max-w-md fade-in">
+          <div className="flex items-center justify-between p-4 border-b border-white/10">
+            <h3 className="font-bold text-lg gradient-text">⚙️ 여행 설정</h3>
+            <button onClick={onClose} className="text-gray-400 hover:text-white text-xl">×</button>
+          </div>
+          <div className="p-4 space-y-3">
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">여행 이름</label>
+              <input className="w-full rounded-lg px-3 py-2 text-sm" value={form.name} onChange={e => set('name', e.target.value)} />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">여행지</label>
+              <input className="w-full rounded-lg px-3 py-2 text-sm" value={form.destination} onChange={e => set('destination', e.target.value)} />
+            </div>
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <label className="text-xs text-gray-400 mb-1 block">출발일</label>
+                <input type="date" className="w-full rounded-lg px-3 py-2 text-sm" value={form.startDate} onChange={e => set('startDate', e.target.value)} />
+              </div>
+              <div className="flex-1">
+                <label className="text-xs text-gray-400 mb-1 block">귀국일</label>
+                <input type="date" className="w-full rounded-lg px-3 py-2 text-sm" value={form.endDate} onChange={e => set('endDate', e.target.value)} />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">숙소명</label>
+              <input className="w-full rounded-lg px-3 py-2 text-sm" placeholder="호텔 또는 숙소 이름" value={form.hotelName} onChange={e => set('hotelName', e.target.value)} />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">숙소 위치</label>
+              <button onClick={() => setShowMap(true)}
+                className="w-full rounded-lg px-3 py-2 text-sm border border-white/15 hover:border-indigo-400 flex items-center gap-2 transition-colors">
+                <span>📍</span>
+                <span className="flex-1 text-left text-gray-300">
+                  {form.hotelPos ? `${form.hotelPos[0].toFixed(4)}, ${form.hotelPos[1].toFixed(4)}` : '숙소 위치 선택'}
+                </span>
+                {form.hotelPos && <span className="text-green-400 text-xs">✓</span>}
+              </button>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 p-4 border-t border-white/10">
+            <button onClick={onClose} className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-sm">취소</button>
+            <button onClick={save}
+              disabled={!form.name || !form.destination || !form.startDate || !form.endDate}
+              className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm font-semibold disabled:opacity-50">저장</button>
+          </div>
+        </div>
+      </div>
+      {showMap && (
+        <MapPickerModal initialPos={form.hotelPos} initialName={form.hotelName}
+          onConfirm={p => { set('hotelPos', p); setShowMap(false); }}
+          onClose={() => setShowMap(false)} />
+      )}
+    </>
+  );
+}
+
+/* ─────────────────────────── CHECKLIST VIEW ─────────────────────────── */
+function ChecklistView({ show }) {
+  const [people, setPeople] = useState(() => {
+    try { const s = localStorage.getItem(PEOPLE_KEY); return s ? JSON.parse(s) : PEOPLE_DEFAULT; } catch { return PEOPLE_DEFAULT; }
+  });
+  const [clData, setClData] = useState(() => {
+    try { const s = localStorage.getItem(CL_KEY); return s ? JSON.parse(s) : CL_DEFAULT; } catch { return CL_DEFAULT; }
+  });
+  const [ck, setCk] = useState(() => {
+    const obj = {};
+    people.forEach(p => {
+      try { const s = localStorage.getItem(`tp-ck-${p.id}`); obj[p.id] = s ? JSON.parse(s) : {}; } catch { obj[p.id] = {}; }
+    });
+    return obj;
+  });
+  const [editMode, setEditMode] = useState(false);
+  const [addCatName, setAddCatName] = useState('');
+  const [addItemMap, setAddItemMap] = useState({});
+  const [editCatMap, setEditCatMap] = useState({});
+  const [editItemMap, setEditItemMap] = useState({});
+
+  useEffect(() => { localStorage.setItem(PEOPLE_KEY, JSON.stringify(people)); }, [people]);
+  useEffect(() => { localStorage.setItem(CL_KEY, JSON.stringify(clData)); }, [clData]);
+  useEffect(() => {
+    people.forEach(p => { localStorage.setItem(`tp-ck-${p.id}`, JSON.stringify(ck[p.id] || {})); });
+  }, [ck]);
+
+  const gridCls = people.length === 1 ? 'grid-cols-1' : people.length === 2 ? 'grid-cols-2' : 'grid-cols-3';
+
+  function toggleCk(pid, catId, item) {
+    const key = `${catId}__${item}`;
+    setCk(prev => {
+      const up = { ...prev, [pid]: { ...prev[pid], [key]: !prev[pid]?.[key] } };
+      localStorage.setItem(`tp-ck-${pid}`, JSON.stringify(up[pid]));
+      return up;
+    });
+  }
+
+  function addPerson() {
+    const idx = people.length % GRAD_POOL.length;
+    const newP = { id: genId(), key: `동행${people.length}`, emoji: EMOJI_POOL[people.length % EMOJI_POOL.length], ...GRAD_POOL[idx] };
+    setPeople(p => [...p, newP]);
+    setCk(c => ({ ...c, [newP.id]: {} }));
+  }
+
+  function delPerson(idx) {
+    const p = people[idx];
+    localStorage.removeItem(`tp-ck-${p.id}`);
+    setPeople(arr => arr.filter((_, i) => i !== idx));
+    setCk(c => { const n = { ...c }; delete n[p.id]; return n; });
+  }
+
+  function renamePerson(idx, val) {
+    setPeople(arr => arr.map((p, i) => i === idx ? { ...p, key: val } : p));
+  }
+
+  function addCat() {
+    if (!addCatName.trim()) return;
+    const emoji = autoEmoji(addCatName);
+    setClData(d => [...d, { id: genId(), cat: `${emoji} ${addCatName}`, items: [] }]);
+    setAddCatName('');
+  }
+
+  function delCat(cid) { setClData(d => d.filter(c => c.id !== cid)); }
+
+  function addItem(cid) {
+    const val = (addItemMap[cid] || '').trim();
+    if (!val) return;
+    setClData(d => d.map(c => c.id === cid ? { ...c, items: [...c.items, val] } : c));
+    setAddItemMap(m => ({ ...m, [cid]: '' }));
+  }
+
+  function delItem(cid, item) {
+    setClData(d => d.map(c => c.id === cid ? { ...c, items: c.items.filter(i => i !== item) } : c));
+  }
+
+  function updateCatName(cid, val) { setEditCatMap(m => ({ ...m, [cid]: val })); }
+  function saveCatName(cid) {
+    const val = editCatMap[cid];
+    if (!val?.trim()) return;
+    const emoji = autoEmoji(val);
+    const newName = val.includes(' ') ? val : `${emoji} ${val}`;
+    setClData(d => d.map(c => c.id === cid ? { ...c, cat: newName } : c));
+    setEditCatMap(m => { const n = { ...m }; delete n[cid]; return n; });
+  }
+
+  return (
+    <div style={{ display: show ? 'block' : 'none' }} className="h-full overflow-y-auto p-3">
+      {/* header */}
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="font-bold text-base gradient-text">🧳 준비물 체크리스트</h2>
+        <button onClick={() => setEditMode(e => !e)}
+          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${editMode ? 'bg-orange-500/30 text-orange-300 border border-orange-500/50' : 'bg-white/10 hover:bg-white/20 text-gray-300'}`}>
+          {editMode ? '✓ 편집 완료' : '✏️ 편집'}
+        </button>
+      </div>
+
+      {/* people section */}
+      {editMode && (
+        <div className="glass rounded-xl p-3 mb-4 border border-white/10">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-bold text-gray-300">👥 여행 멤버</span>
+            <button onClick={addPerson} className="px-2 py-1 rounded-lg bg-indigo-600/50 hover:bg-indigo-600 text-xs">+ 추가</button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {people.map((p, i) => (
+              <div key={p.id} className="flex items-center gap-1.5 glass px-2 py-1 rounded-lg border border-white/10">
+                <span className="text-base">{p.emoji}</span>
+                <input value={p.key} onChange={e => renamePerson(i, e.target.value)}
+                  className="w-20 bg-transparent border-none text-xs font-semibold text-white p-0 outline-none" />
+                {people.length > 1 && (
+                  <button onClick={() => delPerson(i)} className="text-red-400 hover:text-red-300 text-xs ml-1">✕</button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* checklist categories */}
+      {clData.map(cat => (
+        <div key={cat.id} className="glass rounded-xl mb-3 border border-white/8 overflow-hidden">
+          <div className="flex items-center justify-between px-3 py-2 border-b border-white/8 bg-white/3">
+            {editMode && editCatMap[cat.id] !== undefined ? (
+              <div className="flex gap-1 flex-1">
+                <input value={editCatMap[cat.id]} onChange={e => updateCatName(cat.id, e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && saveCatName(cat.id)}
+                  className="flex-1 rounded px-2 py-0.5 text-xs" />
+                <button onClick={() => saveCatName(cat.id)} className="px-2 py-0.5 rounded bg-indigo-600 text-xs">✓</button>
+              </div>
+            ) : (
+              <span className="font-bold text-sm cursor-pointer" onClick={() => editMode && setEditCatMap(m => ({ ...m, [cat.id]: cat.cat }))}>{cat.cat}</span>
+            )}
+            {editMode && (
+              <button onClick={() => delCat(cat.id)} className="text-red-400 hover:text-red-300 text-xs ml-2">🗑️</button>
+            )}
+          </div>
+          <div className="p-2">
+            {cat.items.map(item => (
+              <div key={item} className="flex items-center gap-2 py-1">
+                {editMode ? (
+                  <button onClick={() => delItem(cat.id, item)} className="text-red-400 text-xs w-4 flex-shrink-0">✕</button>
+                ) : null}
+                <div className={`flex-1 grid gap-2 ${gridCls}`}>
+                  {people.map(p => {
+                    const key = `${cat.id}__${item}`;
+                    const checked = ck[p.id]?.[key];
+                    return (
+                      <label key={p.id} className={`flex items-center gap-1.5 group cursor-pointer`}>
+                        <div onClick={() => toggleCk(p.id, cat.id, item)}
+                          className={`w-4 h-4 rounded border-2 flex-shrink-0 flex items-center justify-center transition-all ${checked ? p.active : `border-white/20 ${p.hover}`}`}
+                          style={checked ? { background: p.hex, borderColor: p.hex } : {}}>
+                          {checked && <span className="text-white text-xs leading-none">✓</span>}
+                        </div>
+                        <span className={`text-xs leading-tight ${checked ? 'checked-item' : 'text-gray-300'}`}>
+                          {!editMode && people.length > 1 && <span style={{ color: p.hex }} className="mr-1 text-xs">{p.emoji}</span>}
+                          {item}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+            {editMode && (
+              <div className="flex gap-1 mt-2">
+                <input value={addItemMap[cat.id] || ''} onChange={e => setAddItemMap(m => ({ ...m, [cat.id]: e.target.value }))}
+                  onKeyDown={e => e.key === 'Enter' && addItem(cat.id)}
+                  className="flex-1 rounded px-2 py-1 text-xs" placeholder="항목 추가..." />
+                <button onClick={() => addItem(cat.id)} className="px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-xs">+</button>
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
+
+      {editMode && (
+        <div className="flex gap-2 mt-3">
+          <input value={addCatName} onChange={e => setAddCatName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && addCat()}
+            className="flex-1 rounded-lg px-3 py-2 text-sm" placeholder="새 카테고리 이름..." />
+          <button onClick={addCat} className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm font-semibold">+ 카테고리</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────── SETUP VIEW ─────────────────────────── */
+function SetupView({ onComplete }) {
+  const [step, setStep] = useState(0);
+  const [form, setForm] = useState({
+    name: '', destination: '', startDate: '', endDate: '',
+    hotelName: '', hotelPos: null
+  });
+  const [showMap, setShowMap] = useState(false);
+  const [errors, setErrors] = useState({});
+
+  function set(k, v) { setForm(f => ({ ...f, [k]: v })); setErrors(e => ({ ...e, [k]: '' })); }
+
+  function validateStep() {
+    const e = {};
+    if (step === 0) {
+      if (!form.name.trim()) e.name = '여행 이름을 입력하세요';
+      if (!form.destination.trim()) e.destination = '여행지를 입력하세요';
+    }
+    if (step === 1) {
+      if (!form.startDate) e.startDate = '출발일을 선택하세요';
+      if (!form.endDate) e.endDate = '귀국일을 선택하세요';
+      if (form.startDate && form.endDate && new Date(form.endDate) < new Date(form.startDate)) e.endDate = '귀국일은 출발일 이후여야 합니다';
+    }
+    setErrors(e);
+    return Object.keys(e).length === 0;
+  }
+
+  function next() { if (validateStep()) setStep(s => s + 1); }
+  function prev() { setStep(s => s - 1); }
+
+  function complete() {
+    const dates = dateRange(form.startDate, form.endDate);
+    const days = dates.map(d => ({ date: d, places: [] }));
+    const trip = {
+      name: form.name, destination: form.destination,
+      startDate: form.startDate, endDate: form.endDate,
+      hotel: { name: form.hotelName, pos: form.hotelPos },
+      days, version: APP_VER
+    };
+    onComplete(trip);
+  }
+
+  const steps = ['기본 정보', '여행 날짜', '숙소 설정'];
+  const stepIcons = ['✈️', '📅', '🏨'];
+
+  return (
+    <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-indigo-950 via-[#0f0f1a] to-purple-950">
+      <div className="w-full max-w-md">
+        {/* logo */}
+        <div className="text-center mb-8">
+          <div className="text-5xl mb-3">✈️</div>
+          <h1 className="text-3xl font-black gradient-text">Travel Planner</h1>
+          <p className="text-gray-400 text-sm mt-1">나만의 여행 계획을 만들어보세요</p>
+        </div>
+
+        {/* step indicators */}
+        <div className="flex items-center justify-center gap-2 mb-6">
+          {steps.map((s, i) => (
+            <React.Fragment key={i}>
+              <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${i === step ? 'bg-indigo-600 text-white' : i < step ? 'bg-indigo-600/30 text-indigo-300' : 'bg-white/10 text-gray-500'}`}>
+                <span>{stepIcons[i]}</span>
+                <span>{s}</span>
+              </div>
+              {i < steps.length - 1 && <div className={`w-6 h-0.5 ${i < step ? 'bg-indigo-500' : 'bg-white/15'}`} />}
+            </React.Fragment>
+          ))}
+        </div>
+
+        {/* card */}
+        <div className="glass rounded-2xl p-6">
+          {step === 0 && (
+            <div className="space-y-4 wizard-step fade-in">
+              <h2 className="font-bold text-lg mb-4">어떤 여행인가요?</h2>
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">여행 이름 *</label>
+                <input className="w-full rounded-xl px-4 py-3 text-sm" placeholder="예: 도쿄 봄 여행 🌸"
+                  value={form.name} onChange={e => set('name', e.target.value)} onKeyDown={e => e.key === 'Enter' && next()} />
+                {errors.name && <p className="text-red-400 text-xs mt-1">{errors.name}</p>}
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">여행지 *</label>
+                <input className="w-full rounded-xl px-4 py-3 text-sm" placeholder="예: 일본 도쿄"
+                  value={form.destination} onChange={e => set('destination', e.target.value)} onKeyDown={e => e.key === 'Enter' && next()} />
+                {errors.destination && <p className="text-red-400 text-xs mt-1">{errors.destination}</p>}
+              </div>
+            </div>
+          )}
+          {step === 1 && (
+            <div className="space-y-4 wizard-step fade-in">
+              <h2 className="font-bold text-lg mb-4">언제 떠나시나요?</h2>
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">출발일 *</label>
+                <input type="date" className="w-full rounded-xl px-4 py-3 text-sm"
+                  value={form.startDate} onChange={e => set('startDate', e.target.value)} />
+                {errors.startDate && <p className="text-red-400 text-xs mt-1">{errors.startDate}</p>}
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">귀국일 *</label>
+                <input type="date" className="w-full rounded-xl px-4 py-3 text-sm"
+                  value={form.endDate} onChange={e => set('endDate', e.target.value)} />
+                {errors.endDate && <p className="text-red-400 text-xs mt-1">{errors.endDate}</p>}
+              </div>
+              {form.startDate && form.endDate && !errors.endDate && (
+                <div className="bg-indigo-500/15 border border-indigo-500/30 rounded-xl p-3 text-sm text-indigo-300">
+                  🗓️ 총 <strong>{dateRange(form.startDate, form.endDate).length}일</strong> 여행 · {dateRange(form.startDate, form.endDate).length - 1}박
+                </div>
+              )}
+            </div>
+          )}
+          {step === 2 && (
+            <div className="space-y-4 wizard-step fade-in">
+              <h2 className="font-bold text-lg mb-1">숙소 정보</h2>
+              <p className="text-xs text-gray-400 mb-4">나중에 설정해도 됩니다</p>
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">숙소명</label>
+                <input className="w-full rounded-xl px-4 py-3 text-sm" placeholder="예: 신주쿠 그랜드 호텔"
+                  value={form.hotelName} onChange={e => set('hotelName', e.target.value)} />
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">숙소 위치</label>
+                <button onClick={() => setShowMap(true)}
+                  className="w-full rounded-xl px-4 py-3 text-sm border border-white/15 hover:border-indigo-400 flex items-center gap-2 transition-colors">
+                  <span>📍</span>
+                  <span className="flex-1 text-left text-gray-400">
+                    {form.hotelPos ? `${form.hotelPos[0].toFixed(4)}, ${form.hotelPos[1].toFixed(4)}` : '지도에서 위치 선택'}
+                  </span>
+                  {form.hotelPos && <span className="text-green-400 text-xs">✓ 설정됨</span>}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* buttons */}
+          <div className="flex justify-between mt-6 pt-4 border-t border-white/10">
+            <button onClick={prev} disabled={step === 0}
+              className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-sm disabled:opacity-30">← 이전</button>
+            {step < steps.length - 1 ? (
+              <button onClick={next} className="px-6 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-sm font-semibold">다음 →</button>
+            ) : (
+              <button onClick={complete} className="px-6 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-sm font-semibold">
+                여행 시작! 🚀
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+      {showMap && (
+        <MapPickerModal initialPos={form.hotelPos} initialName={form.hotelName}
+          onConfirm={p => { set('hotelPos', p); setShowMap(false); }}
+          onClose={() => setShowMap(false)} />
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────── APP ─────────────────────────── */
+function App() {
+  const [tripData, setTripData] = useState(() => {
+    try {
+      const s = localStorage.getItem(APP_KEY);
+      if (!s) return null;
+      const d = JSON.parse(s);
+      if (d.version !== APP_VER) return null;
+      return d;
+    } catch { return null; }
+  });
+  const [tab, setTab] = useState('home');
+  const [showSettings, setShowSettings] = useState(false);
+
+  function saveTripData(d) {
+    const nd = { ...d, version: APP_VER };
+    setTripData(nd);
+    localStorage.setItem(APP_KEY, JSON.stringify(nd));
+  }
+
+  function handleSetupComplete(trip) { saveTripData(trip); }
+
+  function handleSavePlace(id, fromDay, form, toDay) {
+    const nd = JSON.parse(JSON.stringify(tripData));
+    nd.days[fromDay].places = nd.days[fromDay].places.filter(p => p.id !== id);
+    const updated = { ...form, id };
+    nd.days[toDay].places.push(updated);
+    saveTripData(nd);
+  }
+
+  function handleDeletePlace(id, dayIdx) {
+    const nd = JSON.parse(JSON.stringify(tripData));
+    nd.days[dayIdx].places = nd.days[dayIdx].places.filter(p => p.id !== id);
+    saveTripData(nd);
+  }
+
+  function handleAddPlace(dayIdx, form) {
+    const nd = JSON.parse(JSON.stringify(tripData));
+    nd.days[dayIdx].places.push({ ...form, id: genId() });
+    saveTripData(nd);
+  }
+
+  function handleSettingsSave(form) {
+    const oldDates = dateRange(tripData.startDate, tripData.endDate);
+    const newDates = dateRange(form.startDate, form.endDate);
+    const nd = JSON.parse(JSON.stringify(tripData));
+    nd.name = form.name;
+    nd.destination = form.destination;
+    nd.startDate = form.startDate;
+    nd.endDate = form.endDate;
+    nd.hotel = { name: form.hotelName, pos: form.hotelPos };
+    // sync days array length
+    if (newDates.length > oldDates.length) {
+      for (let i = oldDates.length; i < newDates.length; i++) nd.days.push({ date: newDates[i], places: [] });
+    } else if (newDates.length < oldDates.length) {
+      nd.days = nd.days.slice(0, newDates.length);
+    }
+    saveTripData(nd);
+    setShowSettings(false);
+  }
+
+  function resetTrip() {
+    if (!confirm('여행 데이터를 모두 삭제하고 처음부터 시작하시겠습니까?')) return;
+    localStorage.removeItem(APP_KEY);
+    setTripData(null);
+    setTab('home');
+  }
+
+  if (!tripData) return <SetupView onComplete={handleSetupComplete} />;
+
+  const tabs = [
+    { id:'home', label:'🗺️ 지도' },
+    { id:'day',  label:'📋 일정' },
+    { id:'edit', label:'✏️ 편집' },
+    { id:'cl',   label:'🧳 준비물' },
+  ];
+
+  return (
+    <div className="flex flex-col h-screen">
+      {/* top bar */}
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/10 bg-[#0f0f1a]/95 backdrop-blur-sm sticky top-0 z-20">
+        <div>
+          <h1 className="font-black text-base gradient-text leading-tight">{tripData.name}</h1>
+          <p className="text-xs text-gray-500">{tripData.destination} · {tripData.startDate} ~ {tripData.endDate}</p>
+        </div>
+        <div className="flex gap-1.5">
+          <button onClick={() => setShowSettings(true)}
+            className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center text-sm">⚙️</button>
+          <button onClick={resetTrip}
+            className="w-8 h-8 rounded-lg bg-red-500/20 hover:bg-red-500/40 flex items-center justify-center text-sm text-red-400">🗑️</button>
+        </div>
+      </div>
+
+      {/* tab nav */}
+      <div className="flex gap-1 px-3 py-2 border-b border-white/10 bg-[#0f0f1a]/90">
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={`tab-btn flex-1 py-1.5 rounded-lg text-xs font-semibold ${tab === t.id ? 'active' : 'text-gray-400'}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* content */}
+      <div className="flex-1 overflow-hidden relative">
+        <HomeView tripData={tripData} show={tab === 'home'} />
+        <DayView tripData={tripData} show={tab === 'day'} />
+        <EditView tripData={tripData} onSavePlace={handleSavePlace} onDeletePlace={handleDeletePlace} onAddPlace={handleAddPlace} show={tab === 'edit'} />
+        <ChecklistView show={tab === 'cl'} />
+      </div>
+
+      {showSettings && (
+        <TripSettingsModal tripData={tripData} onSave={handleSettingsSave} onClose={() => setShowSettings(false)} />
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
