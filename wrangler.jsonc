@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "travelplanner",
+  "compatibility_date": "2025-09-27",
+  "main": "worker.js",
+  "observability": { "enabled": true },
+  "assets": { "directory": ".", "binding": "ASSETS" },
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "travelplanner-db",
+      "database_id": "eccbe41b-af3c-4781-8901-c08924a53c2e"
+    }
+  ]
+}
